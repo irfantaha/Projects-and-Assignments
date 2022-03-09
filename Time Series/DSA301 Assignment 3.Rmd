@@ -1,0 +1,278 @@
+---
+title: "DSA301 Assignment 3"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+```
+
+# Question 1
+## Part A
+```{r}
+library(fpp2)
+
+#time plot of austourists
+autoplot(austourists, xlab = "Year", ylab = "Visitor Nights (in millions)")
+
+#boxcox lambda
+BoxCox.lambda(austourists)
+```
+
+There is a strong upward trend and seasonality in the time plot. The variation of the seasonality also increases with time. Since the Box-Cox lambda = 0.0644 is close to zero, we should perform the log transformation on this series.   
+
+## Part B
+```{r}
+#ACF and PACF plots of transformed series
+aus1 <- log(austourists)
+ggtsdisplay(aus1)
+
+#checking for seasonal differencing
+aus1 %>% nsdiffs()
+
+#checking for additional differencing
+aus1 %>% diff(lag = 4) %>% ndiffs()
+```
+
+No, the transformed series is still not stationary as strong seasonality component can still be observed in the ACF plot and there are several significant spikes in the PACF. 
+
+In order to induce stationarity, we will have to first apply first-order seasonal differencing given by the function nsdiffs(). After obtaining the seasonal difference, using the ndiffs() function, R indicates that no additional differencing is required.
+
+## Part C
+```{r}
+#ACF and PACF plots of the differenced series
+aus1 %>%
+  diff(lag = 4) %>%
+  ggtsdisplay() 
+```
+
+The differenced series is now stationary.
+
+# Question 2
+## Part A
+```{r}
+y <- ts(numeric(100))
+e <- rnorm(100)
+phi <- 0.7
+for(i in 2:100) {
+  y[i] <- phi*y[i-1]+e[i]
+}
+ggtsdisplay(y)
+```
+
+## Part B
+```{r}
+#function to generate AR(1) model with varying phi value
+ar1_sim <- function(phi) {
+  for(i in 2:100) {
+  y[i] <- phi*y[i-1]+e[i]
+  }
+  return(y)
+}
+
+#visualise the change in the plot as phi value change
+cbind("Phi = 1" = ar1_sim(1), "Phi = 0.7" = ar1_sim(0.7), "Phi = 0.5" = ar1_sim(0.5), "Phi = 0" = ar1_sim(0),"Phi = -0.5" = ar1_sim(-0.5), "Phi = -1" = ar1_sim(-1)) %>%
+  autoplot(facets=TRUE) + ggtitle ("Change in Phi")
+```
+
+When $\phi_1=0$, the series looks equivalent to a white noise series. When $\phi_1=1$, the series exhibits a random walk behaviour. When $\phi_1<0$, the series tends to oscillate around the mean.
+
+## Part C
+```{r}
+y1 <- ts(numeric(100))
+e1 <- rnorm(100)
+theta <- 0.6
+for(i in 2:100) {
+  y1[i] <- e1[i]+theta*e1[i-1]
+}
+ggtsdisplay(y1)
+```
+
+## Part D
+```{r}
+#function to generate MA(1) model with varying theta value
+ma1_sim <- function(theta) {
+  for(i in 2:100) {
+  y1[i] <- e1[i]+theta*e1[i-1]
+  }
+  return(y1)
+}
+
+#visualise the change in the plot as theta value change
+cbind("Theta = 1" = ma1_sim(1), "Theta = 0.6" = ma1_sim(0.6), "Theta = 0" = ma1_sim(0),"Theta = -0.5" = ma1_sim(-0.5), "Theta = -1" = ma1_sim(-1)) %>%
+  autoplot(facets=TRUE)+ ggtitle ("Change in Theta")
+```
+Changing the value of $\theta_1$ will not result in any significant change in the plot. All of the series exhibits a white noise pattern with no trend and seasonality. Increasing the value of slope coefficient $\theta_1$ will result in an increase in the variance of the series.
+
+## Part E
+```{r}
+y2 <- ts(numeric(100))
+e2 <- rnorm(100)
+theta2 <- 0.6
+phi2 <- 0.6
+for(i in 2:100) {
+  y2[i] <- phi2*y2[i-1]+e2[i]+theta*e2[i-1]
+}
+ggtsdisplay(y2)
+```
+
+## Part F
+```{r}
+y3 <- ts(numeric(100))
+e3 <- rnorm(100)
+Phi1 <- -0.8
+Phi2 <- 0.3
+for(i in 3:100) {
+  y3[i] <- Phi1*y3[i-1]+Phi2*y3[i-2]+e3[i]
+}
+ggtsdisplay(y3)
+```
+
+## Part G
+```{r}
+library(gridExtra)
+grid.arrange(autoplot(y2, ylab = "ARMA(1,1)"), autoplot(y3, ylab = "AR(2)"))
+```
+
+The series from the AR(2) model is increasing with oscillation over time, indicating that it is not stationary. On the other hand, the series from the ARMA(1,1) model fluctuates around mean = 0 with no seasonality or trend, indicating that it is stationary.
+
+# Question 3
+## Part A
+```{r}
+#time plot of wmurders
+autoplot(wmurders)
+
+#finding the appropriate order of differencing to induce stationarity
+ndiffs(wmurders)
+
+#check the differenced data
+wmurders_diff <- diff(diff(wmurders))
+ggtsdisplay(wmurders_diff, main = "Differenced Data")
+
+library(urca)
+wmurders_diff %>% ur.kpss() %>% summary()
+```
+
+Looking at the initial time plot of the series, we observe no seasonality and that the series is not stationary. Using the ndiffs() function, we found that the data needs to be differenced twice to induce stationarity. 
+
+Using the KPSS test on the differenced data, p-value = 0.0458 is significantly small. Therefore, we do not reject the null hypothesis that the series is stationary. Hence, d=2.
+
+From the PACF and ACF plots of the differenced data, we could observe that the ACF cuts off after lag 2 and the lags beyond lag 2 are insignificant while the PACF dies down over time. This suggests that the appropriate model for this series is ARIMA(0,2,2).
+
+## Part B
+No constant should be included in the model. The model ARIMA(0,2,2) has been differenced twice. Since, d=2>1, constant should always be omitted as a constant will result in a quadratic trend which is dangerous for forecasting. Without any constant, the model will follow a straight line instead.
+
+## Part C
+$$\\(1-B)^2Y_t=(1+\theta_1B+\theta_2B^2)\varepsilon_t$$
+
+## Part D
+```{r}
+wmurders_fit <- Arima(wmurders, order = c(0,2,2))
+checkresiduals(wmurders_fit)
+```
+
+The residuals of the model look white noise as all residuals are well within the 95% bounds. The residuals also seem to be normally distributed. From the Ljung-Box test, since p-value = 0.1621 > 0.10, we do not reject null hypothesis even at 10% significant level. Hence, the residuals are not autocorrelated. Thus, the model is satisfactory.
+
+## Part E
+```{r}
+#forecasts using forecast() & Arima() function
+wmurders_fc <- forecast(wmurders_fit, h = 3)
+
+#finding the coefficients of the model
+summary(wmurders_fit)
+```
+$$\begin{align} (1-B)^2Y_t=(1-1.081B+0.1470B^2)\varepsilon_t\\
+Y_t=2Y_{t-1}-Y_{t-2}+\varepsilon_t-1.081\varepsilon_{t-1}+0.1470\varepsilon_{t-2}\\
+\end{align}$$
+```{r}
+#forecasts using manual calculation
+years <- length(wmurders)
+e <- wmurders_fit$residuals
+fc1 <- 2*wmurders[years] - wmurders[years-1] - 1.081*e[years] + 0.1470*e[years-1]
+fc2 <- 2*fc1 - wmurders[years] + e[years]
+fc3 <- 2*fc2 - fc1
+
+#comparing the forecasts obtained from the two methods
+cat("Manual Forecast:", c(fc1, fc2, fc3))
+cat("Forecast with forecast():", wmurders_fc$mean)
+```
+
+The forecasts obtained through manual calculation are close to the forecasts obtained using the forecast() function.
+
+## Part F
+```{r}
+autoplot(wmurders_fc)
+```
+
+## Part G
+```{r}
+#fitting with auto_arima()
+wmurders %>%
+  auto.arima(approximation = F, stepwise = F, seasonal = F) %>%
+  summary()
+
+#compare with ARIMA(0,2,2) model
+summary(wmurders_fit)
+```
+
+The auto.arima() fits the series with the ARIMA(0,2,3) model instead of ARIMA(0,2,2) chosen earlier. Comparing the AICc of these models, the ARIMA(0,2,3) is the better performing model due to the lower value of AICc. Hence, the ARIMA(0,2,3) model is the better model.
+
+# Question 4
+## Part A
+```{r}
+#time plot of usgdp
+autoplot(usgdp)
+
+#transformed data
+log_usgdp <- log(usgdp)
+ggtsdisplay(log_usgdp)
+```
+
+The usgdp series looks to be constantly increasing with no seasonality. As such, there is no need for a Box-Cox transformation for this series. However, in order to facilitate interpretation for the change in GDP, we should consider fitting the series with a log transformation.
+
+## Part B
+```{r}
+fit1 <- log_usgdp %>%
+  auto.arima(approximation=F, seasonal=F, stepwise=F)
+summary(fit1)
+```
+
+## Part C
+```{r}
+#fitting with ARIMA(2,1,2) without drift
+fit2 <- log_usgdp %>%
+  Arima(order = c(2,1,2))
+summary(fit2)
+
+#fitting with ARIMA(2,1,1) with drift
+fit3 <- log_usgdp %>%
+  Arima(order = c(2,1,1), include.drift = TRUE)
+summary(fit3)
+
+#fitting with ARIMA(1,1,2) with drift
+fit4 <- log_usgdp %>%
+  Arima(order = c(1,1,2), include.drift = TRUE)
+summary(fit4)
+```
+
+Comparing the AICc of the 3 other plausible models, the ARIMA(1,1,2) with drift model performed the best with the lowest AICc value. However, the ARIMA(2,1,2) with drift model obtained through the auto.arima() function is still the best perfoming model, outperforming the other 3 models when comparing the values of respective AICc.
+
+## Part D
+```{r}
+checkresiduals(fit1)
+```
+
+Comparing the AICc of the 4 models in part (b) and (c), we will choose the ARIMA(2,1,2) with drift model as it has the lowest value of AICc.
+
+The residuals look white noise as the spikes are within the 95% bounds. From the Ljung-Box Test, p-value = 0.09483 > 0.05. Therefore, we do not reject the null hypothesis at 5% significant level. However, the null hypothesis can still be rejected at 10% significant level. Thus, the residuals can still be passed off as white noise.
+
+## Part E
+```{r}
+library(forecast)
+autoplot(forecast(fit1))+xlab("Year")+ylab("log(GDP)")+ggtitle("ARIMA(2,1,2) with drift Forecast")
+```
+
+Yes, the forecasts look reasonable.

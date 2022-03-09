@@ -1,0 +1,251 @@
+---
+title: "DSA301 Assignment 4"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+```
+
+# Question 1
+## Part A
+```{r}
+library(fpp2)
+ggtsdisplay(huron)
+```
+
+As the data set huron gives the annual water level of Lake Huron, it makes sense that the series does not exhibit any seasonality as intra-year seasonalities such as the four seasons and glacier melt is not taken into consideration. The data seems to follow a downward trend up to roughly the year 1930. Afterwards, the downward trend disappeared.
+
+Upon further research, it is interesting to note that the low water levels in the **1930s & 1960s** are caused by a reduced precipitation during the winter months, exacerbated by higher temperatures in summer, leading to increased evaporation. This is further proof of cyclicality which is confirmed by modern data showing lows again in 1998/99.  
+
+https://www.michigan.gov/egle/0,9429,7-135-3313_3677_3704-12566--,00.html 
+
+## Part B
+```{r}
+#fitting of linear regression
+model1 <- tslm(huron ~ trend)
+summary(model1)
+
+#fitting of piecewise regression
+t = time(huron)
+t.break1 = 1915
+tb1 <- ts(pmax(0, t - t.break1), start = start(huron),frequency=1)  
+model2 <- tslm(huron ~ t + tb1)
+summary(model2)
+
+#plotting the models against the data
+autoplot(huron) +
+  autolayer(fitted(model1), series = "Linear")+
+  autolayer(fitted(model2), series = "Piecewise")
+```
+
+Comparing the Adjusted R-Squared of the two models, the piecewise linear trend model is the better performing model as the it has a higher adjusted R-squared of 0.3841. When we plot the fitted models against the actual data, we could also observe that the piecewise model fits the data better as compared to the linear regression model.
+
+## Part C
+```{r}
+#specify forecast horizon
+h <- 8
+
+#forecast from linear regression model
+fc_model1 <- forecast(model1, h = h)
+p1 <- autoplot(huron) +
+  autolayer(fitted(model1), series = "Linear") +
+  autolayer(fc_model1) + ggtitle("Forecast with Linear Regression Model")
+
+#forecast from piecewise linear regression model
+t.new <- t[length(t)] + seq(h)
+tb1.new <- tb1[length(tb1)] + seq(h)
+newdata <- cbind(t=t.new, tb1=tb1.new) %>%
+  as.data.frame()
+fc_model2 <- forecast(model2, newdata = newdata)
+
+p2 <- autoplot(huron) +
+  autolayer(fitted(model2), series = "Piecewise") +
+  autolayer(fc_model2) + ggtitle("Forecast with Piecewise Linear Trend Model")
+
+library(gridExtra)
+grid.arrange(p1, p2)
+```
+
+The linear model does not take into account the change in trend at the knot at 1915 which seems to suggest there is no trend component in the series after 1915. As such, the forecast from the linear model predicts that the water level will continue dropping for the next 8 years.
+
+The piecewise model provides the better forecasts compared to the linear model as it takes into account the trend change at the knot at 1915 as water level at Lake Huron seems to fluctuate around a common mean after 1915.
+
+# Question 2
+## Part A
+```{r}
+#piecewise linear trend with knot at 1920
+t = time(huron)
+t.break1 = 1920
+tb1 <- ts(pmax(0, t - t.break1), start = start(huron),frequency=1)
+
+#fitting of piecewise linear trend with an ARMA(1,1) error structure
+fit_arma <- Arima(huron, xreg = cbind(t, tb1), order = c(1,0,1))
+summary(fit_arma)
+
+#fitting of piecewise linear trend using auto.arima()
+fit_auto <- auto.arima(huron, xreg = cbind(t, tb1))
+summary(fit_auto)
+```
+
+We fitted the model with an ARMA(1,1) error structure and compared it to a model selected using the auto.arima() function. Comparing the AICc of the two models, we can conclude that the ARIMA(2,0,0) obtained through the auto.arima() function is the better model with lower AICc of 210.65.
+
+## Part B
+```{r}
+h <- 30
+t.new <- t[length(t)] + seq(h)
+tb1.new <- tb1[length(tb1)] + seq(h)
+new_xreg <- cbind(t=t.new, tb1=tb1.new)
+
+#ARIMA(1,0,1) Forecast
+fit_arma_fc <- forecast(fit_arma, xreg = new_xreg)
+autoplot(fit_arma_fc) + ylab("Water Level") + xlab("Year")
+
+#ARIMA(2,0,0) Forecast
+fit_auto_fc <- forecast(fit_auto, xreg = new_xreg)
+autoplot(fit_auto_fc) + ylab("Water Level") + xlab("Year")
+
+```
+
+# Question 3
+## Part A
+```{r}
+avg_cost <- motel[, "Takings"]/motel[, "Roomnights"]
+ggtsdisplay(avg_cost)
+```
+
+## Part B
+```{r}
+#ts plots of a night's accommodation and cpi
+cpi <-  read.csv("cpi.csv", header = T)
+cpi.ts <- ts(cpi[,2], start=c(1980,1), end=c(1995,6), frequency=12)
+
+cbind("Average Cost" = avg_cost, "CPI" = cpi.ts) %>%
+  autoplot(facet = TRUE)
+```
+
+The average cost data exhibits an upward trend with increasing variance over time. In order to stabilise the variance in the time series, we will have to take the logarithm of average cost data. 
+
+The average cost data is affected by the value of money. Hence, it is highly correlated to the CPI, as observed from the similarity in the time plots of the two variables. The average cost data has to be adjusted to take into account inflation through the CPI data before fitting them into any models. As such, since there is a need for log transformation for the average cost data, it is essential that logarithms of both variables be taken before fitting any models.
+
+## Part C
+```{r}
+#log transformation of the two variables
+log_cpi <- log(cpi.ts)
+log_ac <- log(avg_cost)
+
+#regression model
+fit_motel <- auto.arima(log_ac, xreg = log_cpi, stepwise = F, approximation = F)
+summary(fit_motel)
+
+#regression and Arima errors
+cbind("Regression Errors" = residuals(fit_motel, type="regression"),
+      "ARIMA errors" = residuals(fit_motel, type="innovation")) %>%
+  autoplot(facets=TRUE)
+
+#residuals
+checkresiduals(fit_motel)
+```
+
+The ARIMA errors resemble a white noise series. Most of the spikes in the ACF plot are within the 95% bounds. From the Ljung-Box test, p-value = 0.1283 > 0.10 is sufficiently large. Therefore, we do not reject the null hypothesis that the residuals from the ARIMA errors are not autocorrelated. Hence, we can conclude that the residuals resemble white noise and that the regression model with ARIMA(1,0,1)(0,1,1) errors is satisfactory.
+
+## Part D
+```{r}
+#forecast of CPI figures
+cpi_fc <-  forecast(log_cpi, h = 12)
+
+#forecast of average price of room
+avg_cost_fc <- forecast(fit_motel, xreg = cpi_fc$mean, h = 12)
+autoplot(avg_cost_fc) + ylab("Log(Average Price Per Room)") + xlab("Year")
+```
+
+# Question 4
+## Part A
+```{r}
+#time series plots of fancy
+ggtsdisplay(fancy)
+```
+
+From the time plot of the data set fancy, we could observe a general upward trend and strong seasonality in the time series. The upward trend is expected as the shop expanded its business. The ACF plot shows significant spikes at lags 12 and 24, indicating that there is a surge in sales in the month of December which is expected due to the large influx of visitors during the Christmas festivities. This seasonal spike in sales in the month of December is consistent throughout the years.
+
+We could also observe an increase in monthly sales in the month of March. This could be explained by the influx of visitors to the beach during the annual local surfing festival every March since 1988.
+
+However, we could see an unexpected fluctuation in December 1990 and March 1991. The growth in monthly sales in both months of March and December have been increasing throughout the years. However, in Dec 1990 and Mar 1991, the increase in the monthly sales is significantly smaller compared to previous years. Upon further research, a category 4 Cyclone Joy hit Queensland in Dec 1990, resulting in extensive flooding. This could potentially explain the unexpected fluctuations in both months, as the impact from the disaster would most likely result in the cancellation or postponement of the annual festival.
+
+## Part B
+The data exhibits a general upward trend with increasing seasonality over time. In order to stabilise this increasing variance in the data set, it is necessary for us to take the logarithm of the data before fitting any models.
+
+In addition, taking the logarithm of this data will help to facilitate interpretation when running a model. Taking the logarithm will allow us to interpret the change in monthly sales in terms of percentage change. This is necessary for this type of data as the seasonal component is a multiplicative component and the figures from the monthly sales data are rather huge for interpretation. 
+
+## Part C
+```{r}
+#logarithm of fancy
+log_fancy <- log(fancy)
+
+#regression model with a linear trend and seasonal dummies
+fit_fancy <- tslm(log_fancy ~ trend + season)
+summary(fit_fancy)
+```
+
+## Part D
+```{r}
+#plot of residuals against time
+autoplot(residuals(fit_fancy), main = "Residuals Plot")
+
+#plot of residuals against the fitted values
+cbind(Fitted = fitted(fit_fancy),
+      Residuals=residuals(fit_fancy)) %>%
+  as.data.frame() %>%
+  ggplot(aes(x=Fitted, y=Residuals)) + geom_point() +
+  ggtitle("Plot of Residuals against Fitted Values")
+
+```
+
+The scatter plot of residuals against time shows no pattern and randomly scattered. This suggests that the errors appear homoscedastic.
+
+However, the residuals plot of the regression model does exhibit some trend and does not appear stationary. This could be problematic as running a regression model with non-stationary data may result in spurious regression.
+
+## Part E
+```{r}
+summary(fit_fancy)
+```
+
+We can observe that all of the variables are significant at 0.001 significance level with the exception of season2 which is significant only at 0.05 significance level. All coefficients are positive, which makes sense given the growth trend shown in the plot. Seasons 11 & 12 show the highest magnitude and strongest p-value, which also makes sense given the peak influx in December.  
+
+Since we have taken the logarithm of the fancy dataset, we can interpret the coefficients of each variable in terms of percentage growth. The value of the coefficients indicate the magnitude of the impact of the variable on the total monthly sales in a given month. For example, for the month of December, we can expect the total monthly sales to be increased by approximately 9.6% (intercept + trend + season12).
+
+## Part F
+```{r}
+checkresiduals(fit_fancy)
+```
+
+From the Breusch-Godfrey test, the p-value = 0.003209 < 0.01 is sufficiently small. Thus, that we reject null hypothesis that the residuals are not serially correlated at 0.01 significance level. This indicates that there is autocorrelation in the model. Hence, the model is not satisfactory.
+
+## Part G
+```{r}
+fancy_fc <- forecast(fit_fancy, h = 36)
+autoplot(log_fancy) + 
+  autolayer(fancy_fc) + ggtitle("Forecast from Linear Regression Model") + ylab("Log(Total Monthly Sales)") + xlab("Year") 
+```
+
+## Part H
+```{r}
+#taking exponents of the forecast to back transform to raw data
+fancy_fc_raw <- fancy_fc
+fancy_fc_raw$mean <- exp(fancy_fc$mean)
+fancy_fc_raw$upper <- exp(fancy_fc$upper)
+fancy_fc_raw$lower <- exp(fancy_fc$lower)
+
+autoplot(fancy) + 
+  autolayer(fancy_fc_raw) + ggtitle("Forecast from Linear Regression Model") + ylab("Total Monthly Sales") + xlab("Year") 
+```
+
+## Part I
+We could further improve these predictions by applying exponential smoothing methods to the forecasts. Even after taking logarithm of the variable before fitting the model, the forecasts still seem to follow an exponential trend. The seasonal variations in the data seems to be increasing over time in the series. 
+
+The exponential trend can be explained by the expansion of the business. However, the law of diminishing returns will eventually kick in as expansion within a particular store is limited. As such, an alternative method to improve the predictions will be the Damped Multiplicative Holt-Winters Method. 
