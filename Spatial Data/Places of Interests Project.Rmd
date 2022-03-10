@@ -1,0 +1,431 @@
+---
+title: "Places of Interest in Singapore"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# DESCRIPTIVE ANALYSIS
+## Loading Dataset
+```{r}
+library(sf)
+
+# Set Working Directory
+setwd("C:/Users/fanfa/Desktop/DSA303/DSA303_Proj/dataset")
+
+# Parks
+parks <- st_read('parks-geojson.geojson')
+table(st_is_valid(parks))
+parks_kml <- st_read("parks-kml.kml")
+table(st_is_valid(parks_kml))
+
+# Historic Sites
+historicsites <- st_read('historic-sites-geojson.geojson')
+table(st_is_valid(historicsites))
+
+# Monuments
+monuments <- st_read('monuments-geojson.geojson')
+table(st_is_valid(monuments))
+
+# Museums
+museums <- st_read('museums-geojson.geojson')
+table(st_is_valid(museums))
+
+# Tourist Attractions
+attractions <- st_read('TOURISM.shp')
+table(st_is_valid(attractions))
+
+# SG Planning Areas
+sg_map <- st_read("MP14_PLNG_AREA_WEB_PL.shp") 
+```
+
+## Merging Different Datasets
+
+**Important Note:** Upon further research, we have found that the Leaflet package expects all point, line and shape data to be specified in latitude and longitude which will then be automatically projected into EPSG3857 (Web Mercator), a common CRS used in many online maps such as OpenStreetMap (https://rstudio.github.io/leaflet/projections.html). As we intend to present our findings using functions and interactive maps from the Leaflet package, we have decided to utilise EPSG4236 (longlat) as the CRS for our analysis.
+
+```{r}
+library(dplyr); library(tmap)
+
+# Attractions (shapefile format)
+attractions_omit <- attractions[-73,] # remove the row with 0 for Long and Lat
+attractions_longlat <- attractions_omit %>% st_transform(crs = "+proj=longlat")
+st_crs(attractions_longlat)$proj4string
+CRS = st_crs(attractions_longlat)$proj4string
+
+attractions_data <- attractions_longlat %>%
+  mutate(NAME = PAGETITLE, DESCRIPTION = META_DESCR, HYPERLINK = URL_PATH, PHOTOURL = IMAGE_PATH, OPENING_HOURS = OPENING_HO) %>%
+  select(NAME, DESCRIPTION, OPENING_HOURS, ADDRESS, POSTALCODE, HYPERLINK, PHOTOURL, geometry)
+glimpse(attractions_data)
+
+# Full_join() on datasets parks, museums, monuments and historicsites (geojson format)
+historicsites_df <- as.data.frame(historicsites)
+combined_json <- full_join(parks, historicsites_df)
+
+monuments_df <- as.data.frame(monuments)
+combined_json1 <- full_join(combined_json, monuments_df)
+
+museums_df <-  as.data.frame(museums)
+combined_json2 <- full_join(combined_json1, museums_df)
+combined_json3 <- st_zm(combined_json2, drop = TRUE)
+
+combined_json3 <- combined_json3 %>% st_transform(crs = CRS)
+st_crs(combined_json3)$proj4string
+
+# extract non-spatial data from the 'Description' column
+library(tidyverse); library(rvest)
+json_attributes <- lapply(X = 1:nrow(combined_json3), 
+                     FUN = function(x) {
+
+                       combined_json3 %>% 
+                         slice(x) %>%
+                         pull(Description) %>%
+                         read_html() %>%
+                         html_node("table") %>%
+                         html_table(header = TRUE, trim = TRUE, dec = ".", fill = TRUE) %>%
+                         as_tibble(.name_repair = ~ make.names(c("Attribute", "Value"))) %>% 
+                         pivot_wider(names_from = Attribute, values_from = Value)
+
+                     })
+
+json_attr <- combined_json3 %>% bind_cols(bind_rows(json_attributes)) %>%
+  select(-Description)
+
+json_data <- json_attr %>%
+  mutate(ADDRESS = ADDRESSSTREETNAME, POSTALCODE = ADDRESSPOSTALCODE) %>%
+  select(NAME, DESCRIPTION, ADDRESS, POSTALCODE, HYPERLINK, PHOTOURL, geometry)
+glimpse(json_data)
+
+# Full join of all datasets
+all_data <- full_join(as.data.frame(attractions_data)[, -8], as.data.frame(json_data)[, -7])
+all_data$geometry <- c(attractions_data$geometry,json_data$geometry)
+glimpse(all_data)
+```
+
+## Adding a column called Category with weights
+```{r}
+library(tmap); library(aspace, quietly = T); library(leaflet); library(sf)
+
+# Creating a new sf data frame with categories
+CATEGORY <- c(rep("Attractions", 106), rep("Parks", 350), rep("Historic Sites", 99), rep("Monuments", 72), rep("Museums", 54))
+
+full_data <- cbind(all_data, CATEGORY) %>% as.data.frame() %>% st_as_sf(crs = CRS)
+
+glimpse(full_data)
+class(full_data)
+
+# Applying of weights based on Categories (Selected Category = 10, Other Categories = 1)
+att_weights <- c(rep(1, nrow(full_data)))
+att_weights[full_data$CATEGORY == "Attractions"] <- 10
+
+parks_weights <- c(rep(1, nrow(full_data)))
+parks_weights[full_data$CATEGORY == "Parks"] <- 10
+
+monuments_weights <- c(rep(1, nrow(full_data)))
+monuments_weights[full_data$CATEGORY == "Monuments"] <- 10
+
+historicsites_weights <- c(rep(1, nrow(full_data)))
+historicsites_weights[full_data$CATEGORY == "Historic Sites"] <- 10
+
+museums_weights <- c(rep(1, nrow(full_data)))
+museums_weights[full_data$CATEGORY == "Museums"] <- 10
+
+```
+
+## Basemap and Tourist Interactive Map
+```{r}
+library(sf); library(tmap)
+
+# Basemap for Descriptive Analysis
+tmap_mode("view")
+base_layer <- tm_shape(full_data) + tm_dots(col = "CATEGORY", palette = "Set1", size = 0.05, popup.vars = c("DESCRIPTION", "OPENING_HOURS", "ADDRESS", "POSTALCODE", "HYPERLINK", "PHOTOURL")) + tm_basemap(server = "OpenStreetMap")
+
+# Tourist Interactive Map with Layers Control and Descriptions
+Attractions <- full_data[full_data$CATEGORY == "Attractions",]
+Monuments <- full_data[full_data$CATEGORY == "Monuments",]
+Museums <- full_data[full_data$CATEGORY == "Museums",]
+Historic_Sites <- full_data[full_data$CATEGORY == "Historic Sites",]
+Parks <- full_data[full_data$CATEGORY == "Parks",]
+
+base_layer2 <- tm_shape(Attractions) + tm_dots(col = "blue4", size = 0.05) +  tm_shape(Historic_Sites) + tm_dots(col = "darkgreen", size = 0.05) + tm_shape(Monuments) + tm_dots(col = "cornflowerblue", size = 0.05) + tm_shape(Museums) + tm_dots(col = "orange", size = 0.05) +  tm_shape(Parks) + tm_dots(col = "cyan", size = 0.05) + tm_basemap(server = "OpenStreetMap")
+
+tmap_leaflet(base_layer2) %>%
+  addLayersControl(overlayGroups = c("Attractions", "Parks", "Museums", "Monuments", "Historic_Sites"), options = layersControlOptions(collapse = F))
+```
+
+## Creating Functions for Descriptive Analysis and Weighted Descriptive Analysis
+```{r}
+# Function for Descriptive Analysis
+descriptive_analysis <- function(Data, coords, CRS){
+  
+  ## Standard Ellipse - central tendency
+  mean = mean_centre(id = 1, points = coords)
+  median = median_centre(id = 2, points = coords)
+  
+  ## sdd
+  sdd = calc_sdd(id=3, calccentre = T, weighted = F, points = coords)
+  sdd_line = sddloc %>% st_as_sf(coords = c("x", "y"), crs = CRS) %>% st_combine() %>% st_cast("LINESTRING")
+  std_dist = st_sf(sddatt, geom = st_geometry(sdd_line))
+  
+  ## sde
+  sde = calc_sde(id=4, calccentre = T, weighted = F, points= coords)
+  sde_line = sdeloc %>% st_as_sf(coords = c("x", "y"), crs = CRS) %>% st_combine() %>% st_cast("LINESTRING")
+  std_ellps = st_sf(sdeatt, geom=st_geometry(sde_line))
+  
+  ## mean and median
+  mean_median = rbind(meanloc,medianloc) %>% data.frame() %>% st_as_sf(coords=c("x","y"), crs=CRS)
+  mean_median$id = c("Spatial Mean","Spatial Median")
+  
+  ## plot
+  base_layer <- tm_shape(Data) + tm_dots(col = "CATEGORY", palette = "Set2", size = 0.05, popup.vars = c("DESCRIPTION", "OPENING_HOURS", "ADDRESS", "POSTALCODE", "HYPERLINK", "PHOTOURL")) + tm_basemap(server = "OpenStreetMap")
+  
+  final_map <- base_layer + tm_shape(std_ellps) + tm_lines(lwd=1) + tm_shape(std_dist) + tm_lines(lwd=2, lty=2, col = "red") + tm_shape(mean_median) + tm_dots(size=0.05, shape="id", col="red")
+
+  ## leaflet plot with radius around spatial median
+  tmap_leaflet(final_map) %>%
+  addTiles %>%
+  addCircles(lng = st_coordinates(mean_median$geometry[2])[1], lat = st_coordinates(mean_median$geometry[2])[2], radius = 2000)
+}
+
+# Function for Weighted Descriptive Analysis
+weighted_descriptive_analysis <- function(Data, Coords, CRS, Weights){
+  ## Standard Ellipse - central tendency
+  mean = mean_centre(id = 1, weighted = T, weights = Weights, points = Coords)
+  median = median_centre(id = 2, points = Coords)
+  
+  ## sdd
+  sdd = calc_sdd(id=3, calccentre = T, weighted = T, weights = Weights,  points = Coords)
+  sdd_line = sddloc %>% st_as_sf(coords = c("x", "y"), crs = CRS) %>% st_combine() %>% st_cast("LINESTRING")
+  std_dist = st_sf(sddatt, geom = st_geometry(sdd_line))
+  
+  ## sde
+  sde = calc_sde(id=4, calccentre = T, weighted = T, weights = Weights, points= Coords)
+  sde_line = sdeloc %>% st_as_sf(coords = c("x", "y"), crs=CRS) %>% st_combine() %>% st_cast("LINESTRING")
+  std_ellps = st_sf(sdeatt, geom=st_geometry(sde_line))
+  
+  ## mean and median
+  mean_median = rbind(meanloc,medianloc) %>% data.frame() %>% st_as_sf(coords=c("x","y"), crs=CRS)
+  mean_median$id = c("Spatial Mean","Spatial Median")
+
+  ## plot
+  base_layer <- tm_shape(Data) + tm_dots(col = "CATEGORY", palette = "Set2", size = 0.05, popup.vars = c("DESCRIPTION", "OPENING_HOURS", "ADDRESS", "POSTALCODE", "HYPERLINK", "PHOTOURL")) + tm_basemap(server = "OpenStreetMap")
+  
+  final_map <- base_layer + tm_shape(std_ellps) + tm_lines(lwd=1) + tm_shape(std_dist) + tm_lines(lwd=2, lty=2, col = "red") + tm_shape(mean_median) + tm_dots(size=0.05, shape="id", col="red")
+  
+  ## leaflet plot with radius around the weighted spatial mean
+  tmap_leaflet(final_map) %>%
+  addTiles %>%
+  addCircles(lng = st_coordinates(mean_median$geometry[1])[1], lat = st_coordinates(mean_median$geometry[1])[2], radius = 2000)
+}
+```
+
+## Descriptive Analysis of Places of Interests
+```{r}
+all_coords <- st_coordinates(full_data)
+
+tmap_mode("view")
+poi_map <- descriptive_analysis(full_data, all_coords, CRS)
+poi_map
+```
+
+## Descriptive Analysis of Tourist Attractions
+```{r}
+# attraction coordinates
+att_coords <- full_data[full_data$CATEGORY == "Attractions",] %>% st_coordinates() 
+
+tmap_mode("view")
+att_final_map <- descriptive_analysis(Attractions, att_coords, CRS)
+att_final_map
+```
+
+
+## Weighted Descriptive Analysis of Tourist Attractions
+```{r}
+tmap_mode("view")
+att_weighted_map <- weighted_descriptive_analysis(Attractions, all_coords, CRS, att_weights)
+att_weighted_map
+```
+
+
+## Descriptive Analysis of Parks
+```{r}
+# parks coordinates
+parks_coords <- full_data[full_data$CATEGORY == "Parks",] %>% st_coordinates() 
+
+tmap_mode("view")
+parks_map <- descriptive_analysis(Parks, parks_coords, CRS)
+parks_map
+```
+
+## Weights Descriptive Analysis of Parks
+```{r}
+tmap_mode("view")
+parks_weighted_map <- weighted_descriptive_analysis(Parks, all_coords, CRS, parks_weights)
+parks_weighted_map
+```
+
+## Descriptive Analysis of historicsites
+```{r}
+# historicsites coordinates
+historicsites_coords <- full_data[full_data$CATEGORY == "Historic Sites",] %>% st_coordinates() 
+
+tmap_mode("view")
+historicsites_map <- descriptive_analysis(Historic_Sites, historicsites_coords, CRS)
+historicsites_map
+```
+
+## Weights Descriptive Analysis of historicsites
+```{r}
+tmap_mode("view")
+historicsites_weighted_map <- weighted_descriptive_analysis(Historic_Sites, all_coords, CRS, historicsites_weights)
+historicsites_weighted_map
+```
+
+## Descriptive Analysis of monuments
+```{r}
+# monuments coordinates
+monuments_coords <- full_data[full_data$CATEGORY == "Monuments", ] %>% st_coordinates() 
+
+tmap_mode("view")
+monuments_map <- descriptive_analysis(Monuments, monuments_coords, CRS)
+monuments_map
+```
+
+## Weights Descriptive Analysis of monuments
+```{r}
+tmap_mode("view")
+monuments_weighted_map <- weighted_descriptive_analysis(Monuments, all_coords, CRS, monuments_weights)
+monuments_weighted_map
+```
+
+
+## Descriptive Analysis of museums
+```{r}
+# museums coordinates
+museums_coords <- full_data[full_data$CATEGORY == "Museums", ] %>% st_coordinates() 
+
+tmap_mode("view")
+museums_map <- descriptive_analysis(Museums, museums_coords, CRS)
+museums_map
+```
+
+## Weights Descriptive Analysis of museums
+```{r}
+tmap_mode("view")
+museums_weighted_map <- weighted_descriptive_analysis(Museums, all_coords, CRS, museums_weights)
+museums_weighted_map
+```
+
+# Ideal Location for Accomodation 
+```{r}
+# Loading Hotels dataset
+#setwd("C:/Users/Chin/OneDrive/Desktop/DSA303/Project/Project Dataset")
+setwd("C:/Users/fanfa/Desktop/DSA303/DSA303_Proj/dataset")
+hotels <- st_read("hotel-locations.kml")
+st_crs(hotels)$proj4string
+
+# Initial plot of Hotels dataset
+tmap_mode("view")
+tm_shape(hotels) + tm_dots() + tm_basemap(server = "OpenStreetMap")
+```
+
+## Extracting non-spatial data from Hotels dataset
+```{r}
+# Extracting data from 'Description' column in the kml dataset
+library(tidyverse)
+library(rvest)
+attributes <- lapply(X = 1:nrow(hotels), 
+                     FUN = function(x) {
+
+                       hotels %>% 
+                         slice(x) %>%
+                         pull(Description) %>%
+                         read_html() %>%
+                         html_node("table") %>%
+                         html_table(header = TRUE, trim = TRUE, dec = ".", fill = TRUE) %>%
+                         as_tibble(.name_repair = ~ make.names(c("Attribute", "Value"))) %>% 
+                         pivot_wider(names_from = Attribute, values_from = Value)
+
+                     })
+
+hotels_attr <- hotels %>% bind_cols(bind_rows(attributes)) %>%
+  select(-Description)
+
+hotels_cleaned <- hotels_attr %>% select(NAME, HYPERLINK, POSTALCODE, TOTALROOMS, ADDRESS, geometry)
+glimpse(hotels_cleaned)
+
+# hotels basemap
+tmap_mode("view")
+hotels_base <- tm_shape(hotels_cleaned) + tm_dots() + tm_basemap(server = "OpenStreetMap")
+hotels_base
+```
+
+
+## Tourist Interactive Map - Recommended Location of Stay for Tourists
+```{r}
+# Calculate spatial medians of each Category of places of interest
+AttractionsMedian <- median_centre(id = 2, points = att_coords) %>% st_as_sf(coords = c("median.x", "median.y"), crs = "+proj=longlat") %>% st_transform(crs ="+proj=longlat") %>% st_coordinates()
+MonumentsMedian <- median_centre(id = 2, points = monuments_coords) %>% st_as_sf(coords = c("median.x", "median.y"), crs = CRS) %>% st_coordinates()
+MuseumsMedian <- median_centre(id = 2, points = museums_coords) %>% st_as_sf(coords = c("median.x", "median.y"), crs = CRS) %>% st_coordinates()
+HistoricSitesMedian <- median_centre(id = 2, points = historicsites_coords) %>% st_as_sf(coords = c("median.x", "median.y"), crs = CRS) %>% st_coordinates()
+ParksMedian <- median_centre(id = 2, points = parks_coords) %>% st_as_sf(coords = c("median.x", "median.y"), crs = CRS) %>% st_coordinates()
+
+# Interactive Map using Leaflet (OpenStreetMap)
+tmap_leaflet(hotels_base) %>%
+  addTiles() %>%
+  addCircles(lng = AttractionsMedian[1], lat = AttractionsMedian[2], radius = 1000, group = "Attractions", popup = "Attractions") %>%
+  addCircles(lng = ParksMedian[1], lat = ParksMedian[2], radius = 1000, group = "Parks", popup = "Parks") %>% 
+  addCircles(lng = MonumentsMedian[1], lat = MonumentsMedian[2], radius = 1000, group = "Monuments", popup = "Monuments") %>% 
+  addCircles(lng = MuseumsMedian[1], lat = MuseumsMedian[2], radius = 1000, group = "Museums", popup = "Museums") %>% 
+  addCircles(lng = HistoricSitesMedian[1], lat = HistoricSitesMedian[2], radius = 1000, group = "Historic Sites", popup = "Historic Sites") %>%
+  addLayersControl(overlayGroups = c("Attractions", "Parks", "Monuments", "Museums", "Historic Sites"), options = layersControlOptions(collapsed = F))
+```
+
+# POINT PATTERN ANALYSIS
+## Quadrat Count Analysis
+```{r}
+library(spatstat, quietly=T); library(GISTools)
+
+# convert to projection
+crs_proj <- st_crs(sg_map)$proj4string
+poi_proj <- full_data %>% st_transform(crs = crs_proj)
+
+# convert to PPP
+all_ppp <- as.ppp(poi_proj)
+
+# change window
+sg_blocks <- sg_map %>% as("Spatial")
+class(sg_blocks)
+sg.owin <- as(sg_blocks, "owin")
+Window(all_ppp) = sg.owin
+
+# qc plot
+qc <- quadratcount(all_ppp, nx = 10, ny = 5)
+plot(qc, lty = 3, main = "Quadrat Count Plot of Places of Interest")
+
+# quadrat test
+(quad.test = quadrat.test(all_ppp, nx=10, ny=5))
+# Conclusion: Since P-value < 0.001, we can reject H0 at 1% level of Significance. Hence, conclude that sufficient evidence of clustering.
+```
+
+
+## Kernel Density Estimate of Places of Interest
+```{r}
+all_ppp2 = as.ppp(poi_proj)
+all_kde = density(all_ppp2, sigma = bw.diggle(all_ppp2))
+plot(all_kde, main = "KDE: Places of Interest")
+```
+
+## Clark Evans Test of Places of Interest
+```{r}
+sg_buff = gBuffer(sg_blocks, width=1000) # width is in meters
+sg_owin = as(sg_buff,"owin")
+clarkevans.test(all_ppp2, correction="guard", clipregion = sg_owin, alternative="less")
+```
+
+## K-Function Analysis of Places of Interest
+```{r}
+kf.env <- envelope(all_ppp2, Kest, correction = "best", alternative = "less")
+plot(kf.env, main = "K-Function Analysis of Places of Interest")
+```
