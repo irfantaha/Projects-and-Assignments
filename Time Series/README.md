@@ -8,5 +8,5 @@ The dataset gives the annual water level of Lake Huron. As such, the series does
 
 Upon further research, it is interesting to note that the low water levels in the **1930s & 1960s** are caused by a reduced precipitation during the winter months, exacerbated by higher temperatures in summer, leading to increased evaporation. This is further proof of cyclicality which is confirmed by modern data showing lows again in 1998/99. (https://www.michigan.gov/egle/0,9429,7-135-3313_3677_3704-12566--,00.html)
 
-
+![Test](Images/Lake-Huron-1.png)
 
